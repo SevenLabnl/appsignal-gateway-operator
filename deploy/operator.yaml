@@ -1,0 +1,132 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: appsignal-gateway-operator
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appsignal-gateway-operator
+  namespace: appsignal-gateway-operator
+---
+# Read-only throughout. There is deliberately no write verb anywhere: ownership of a
+# monitor is recorded on the monitor in AppSignal, so this operator never annotates or
+# patches anything a team owns.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appsignal-gateway-operator
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "watch"]
+  # kopf resolves what it watches through the CRD definitions and the namespace list.
+  # Without these it starts, reports "changes will not be noticed", and then quietly
+  # does nothing — so they are required, not optional hardening.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: appsignal-gateway-operator
+subjects:
+  - kind: ServiceAccount
+    name: appsignal-gateway-operator
+    namespace: appsignal-gateway-operator
+roleRef:
+  kind: ClusterRole
+  name: appsignal-gateway-operator
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: appsignal-gateway-operator
+  namespace: appsignal-gateway-operator
+data:
+  # Which hostnames never get a monitor. Everything else served by an HTTPRoute does,
+  # so a new production hostname is covered the moment it is routed — no annotation to
+  # remember, no repository to touch.
+  EXCLUDE_SUFFIXES: "dev.example.com,staging.example.com"
+  REGIONS: "europe"
+  # AppSignal has no maintenance windows; this is what keeps a node drain quiet.
+  WARMUP_MINUTES: "3"
+  SSL_EXPIRATION: "true"
+  RESYNC_SECONDS: "900"
+  # Start here. Flip to "false" once the log shows the plan you expected.
+  DRY_RUN: "true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appsignal-gateway-operator
+  namespace: appsignal-gateway-operator
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: appsignal-gateway-operator
+  template:
+    metadata:
+      labels:
+        app: appsignal-gateway-operator
+    spec:
+      serviceAccountName: appsignal-gateway-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: ghcr.io/sevenlabnl/appsignal-gateway-operator:0.1.0
+          envFrom:
+            - configMapRef:
+                name: appsignal-gateway-operator
+          env:
+            - name: CLUSTER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: appsignal-gateway-operator-cluster
+                  key: CLUSTER_NAME
+            - name: APPSIGNAL_APP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: appsignal-gateway-operator-cluster
+                  key: APPSIGNAL_APP_ID
+            - name: APPSIGNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: appsignal-gateway-operator-token
+                  key: token
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              memory: 192Mi

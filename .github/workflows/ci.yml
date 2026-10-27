@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # GitHub-hosted, so pull requests from forks never run on self-managed runners.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  # Builds on main but publishes only :main and the commit sha. Released versions
+  # come from tags — see release.yml — so nothing on a branch can move a version
+  # someone has pinned.
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Lowercase and spelled out: ${{ github.repository }} carries the
+          # organisation's capitals and a registry name may not have any.
+          tags: |
+            ghcr.io/sevenlabnl/appsignal-gateway-operator:main
+            ghcr.io/sevenlabnl/appsignal-gateway-operator:${{ github.sha }}
