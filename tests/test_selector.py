@@ -79,6 +79,12 @@ def test_body_check_and_warmup_can_be_set_per_route():
     assert m.warmup_minutes == 10
 
 
+def test_a_bad_warmup_falls_back_to_the_default():
+    for bad in ("5m", "-1", "soon"):
+        r = route(hosts=["api.example.com"], annotations={"appsignal-gateway-operator/warmup": bad})
+        assert monitors_for(r, CFG)[0].warmup_minutes == 3
+
+
 def test_defaults_come_from_config():
     m = monitors_for(route(hosts=["a.example.com"]), CFG)[0]
     assert m.warmup_minutes == 3

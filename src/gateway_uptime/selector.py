@@ -5,8 +5,12 @@ people will argue about — can be tested directly.
 """
 from __future__ import annotations
 
+import logging
+
 from .config import ANNOTATION_PREFIX, Config
 from .model import DesiredMonitor
+
+log = logging.getLogger(__name__)
 
 
 def _ann(route: dict, name: str) -> str | None:
@@ -63,9 +67,14 @@ def monitors_for(route: dict, cfg: Config) -> list[DesiredMonitor]:
     body = (_ann(route, "check-body-content") or "").strip()
 
     warmup = cfg.warmup_minutes
-    raw_warmup = _ann(route, "warmup")
+    raw_warmup = (_ann(route, "warmup") or "").strip()
     if raw_warmup:
-        warmup = int(raw_warmup)
+        # One bad annotation must not stop the reconcile of every other route.
+        if raw_warmup.isdigit():
+            warmup = int(raw_warmup)
+        else:
+            log.warning("%s/%s: warmup %r is not a whole number of minutes, using %d",
+                        ns, name, raw_warmup, warmup)
 
     out: list[DesiredMonitor] = []
     for hostname in _hostnames(route):

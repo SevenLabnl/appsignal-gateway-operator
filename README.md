@@ -113,6 +113,35 @@ quietly monitoring nothing.
 | `appsignal-gateway-operator/check-body-content` | text the response body must contain |
 | `appsignal-gateway-operator/warmup` | minutes, overrides `WARMUP_MINUTES` |
 
+### Checking the response body
+
+A page can answer 200 and still be broken: an empty shell, a maintenance page, a proxy's
+error page. Require text that only a working response contains:
+
+```yaml
+metadata:
+  annotations:
+    appsignal-gateway-operator/path: /api/health
+    appsignal-gateway-operator/check-body-content: '"status":"ok"'
+```
+
+AppSignal then fails the check when the body does not contain that text. Remove the
+annotation to drop the check again; the next reconcile clears it.
+
+### Waiting before alerting
+
+`warmup` is how many minutes a check must keep failing before AppSignal opens an alert.
+Raise it for a service that is slow to come back after a deploy:
+
+```yaml
+metadata:
+  annotations:
+    appsignal-gateway-operator/warmup: "10"
+```
+
+It must be a whole number of minutes. Any other value is ignored with a warning in the
+operator log, and `WARMUP_MINUTES` applies.
+
 ### Pointing at a health endpoint
 
 With AppSignal APM on the same app, every uptime check is a request to it, and checks
